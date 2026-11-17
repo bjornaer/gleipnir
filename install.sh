@@ -18,9 +18,10 @@ sha="sha256sum"; command -v sha256sum >/dev/null || sha="shasum -a 256"
 (cd "$tmp" && grep " $asset\$" checksums.txt | $sha -c -) >/dev/null 2>&1 \
   || { echo "checksum mismatch for $asset, aborting" >&2; exit 1; }
 
-curl -fsSL https://opencode.ai/v2/install | bash -s -- --version "$OPENCODE_VERSION"
+[ -n "${GLEIPNIR_NO_OPENCODE:-}" ] || curl -fsSL https://opencode.ai/v2/install | bash -s -- --version "$OPENCODE_VERSION"
 
 mkdir -p "$BIN"
 install -m 755 "$tmp/$asset" "$BIN/gleip"
-echo
+"$BIN/gleip" --help
 echo "gleip installed to $BIN. Open a new shell, then run: gleip setup"
+echo "Run gleip --help anytime to see this again."

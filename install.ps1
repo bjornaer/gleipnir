@@ -37,4 +37,6 @@ $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (($userPath -split ';') -notcontains $Bin) {
     [Environment]::SetEnvironmentVariable('Path', "$userPath;$Bin", 'User')
 }
+& "$Bin\gleip.exe" --help
 Write-Host "gleip installed to $Bin. Open a new terminal, then run: gleip setup"
+Write-Host "Run gleip --help anytime to see this again."

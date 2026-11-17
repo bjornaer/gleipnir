@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,6 +46,25 @@ const banner = `
    forged from a cat's footfall and a mountain's roots
 `
 
+const help = `
+A coding agent on your own model. OpenCode inside, gleipnir around it.
+
+Usage:
+  gleip                  start coding in the current directory
+  gleip setup            choose the model: your subscription/API key, a local model, or a gleipnir endpoint
+  gleip fenrir [flags]   serve a model from this machine to gleipnir clients
+      --auth             require an API key (keys in ~/.config/gleipnir/keys)
+      --listen ADDR      where to serve (default 127.0.0.1:47100; 0.0.0.0:47100 to expose)
+      --model TAG        Ollama model to serve (default: best fit for this machine)
+  gleip --update         update gleip and OpenCode
+  gleip --help           show this help
+
+Anything else goes straight to OpenCode (see: opencode --help), e.g.
+  gleip run "explain this repo"
+
+Docs: https://github.com/bjornaer/gleipnir
+`
+
 func main() {
 	if fi, _ := os.Stdout.Stat(); len(os.Args) == 1 && fi.Mode()&os.ModeCharDevice != 0 {
 		fmt.Print(banner) // only bare `gleip` in a terminal; stays in scrollback behind the TUI
@@ -55,6 +75,17 @@ func main() {
 			fmt.Fprintln(os.Stderr, "gleip:", err)
 			os.Exit(1)
 		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "fenrir" {
+		if err := fenrir(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "gleip fenrir:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 1 && (os.Args[1] == "--help" || os.Args[1] == "-h" || os.Args[1] == "help") {
+		fmt.Print(banner + help)
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "--update" {
@@ -83,9 +114,10 @@ func setup() error {
 			return err
 		}
 		budget := memoryBudgetGB()
-		pick, err := pickModel(db, budget)
+		home, _ := os.UserHomeDir()
+		pick, err := pickModel(db, budget, diskFreeGB(home))
 		if err != nil {
-			return err
+			return fmt.Errorf("%w; use option 1 or 3", err)
 		}
 		fmt.Printf("~%.0f GB usable for models; best fit: %s\n", budget, pick)
 		model = ask("Model [" + pick + "]: ")
@@ -138,18 +170,19 @@ func openDB() (*sql.DB, error) {
 	return db, err
 }
 
-// pickModel returns the best-ranked model whose weights plus ~20% context headroom fit the budget.
-func pickModel(db *sql.DB, budgetGB float64) (string, error) {
+// pickModel returns the best-ranked model whose weights plus ~20% context headroom fit in memory,
+// and whose download leaves 10 GB of disk for everything else.
+func pickModel(db *sql.DB, memGB, diskGB float64) (string, error) {
 	var id string
-	err := db.QueryRow(`SELECT id FROM models WHERE size_gb * 1.2 <= ? ORDER BY rank LIMIT 1`, budgetGB).Scan(&id)
+	err := db.QueryRow(`SELECT id FROM models WHERE size_gb * 1.2 <= ? AND size_gb * 1.1 + 10 <= ? ORDER BY rank LIMIT 1`, memGB, diskGB).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("no local model fits in %.1f GB; use option 1 or 3", budgetGB)
+		return "", fmt.Errorf("no local model fits in %.1f GB memory / %.1f GB free disk", memGB, diskGB)
 	}
 	return id, err
 }
 
-// memoryBudgetGB: NVIDIA VRAM if present, else 60% of RAM (Apple unified memory lands here too).
-// ponytail: total not free RAM, no AMD/Intel GPU detection; add when someone hits it.
+// memoryBudgetGB: NVIDIA VRAM if present, else the RAM budget (Apple unified memory lands here too).
+// ponytail: no AMD/Intel GPU detection; add when someone hits it.
 func memoryBudgetGB() float64 {
 	if out, err := exec.Command("nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits").Output(); err == nil {
 		mib, _ := strconv.ParseFloat(strings.TrimSpace(strings.Split(string(out), "\n")[0]), 64)
@@ -157,10 +190,13 @@ func memoryBudgetGB() float64 {
 			return mib / 1024 * 0.9
 		}
 	}
-	return ramGB() * 0.6
+	return ramBudgetGB()
 }
 
-func ramGB() float64 {
+// ramBudgetGB leaves room for everything else: 60% of total RAM, and on Linux
+// no more than 80% of what other running services leave available.
+// ponytail: macOS/Windows use total RAM only.
+func ramBudgetGB() float64 {
 	var out []byte
 	switch runtime.GOOS {
 	case "darwin":
@@ -169,15 +205,28 @@ func ramGB() float64 {
 		out, _ = exec.Command("powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory").Output()
 	default:
 		b, _ := os.ReadFile("/proc/meminfo") // "MemTotal:  16303404 kB"
-		f := strings.Fields(string(b))
-		if len(f) > 1 {
-			kb, _ := strconv.ParseFloat(f[1], 64)
-			return kb / 1e6
+		kb := map[string]float64{}
+		for _, line := range strings.Split(string(b), "\n") {
+			if f := strings.Fields(line); len(f) > 1 {
+				kb[f[0]], _ = strconv.ParseFloat(f[1], 64)
+			}
 		}
-		return 0
+		return min(kb["MemTotal:"]*0.6, kb["MemAvailable:"]*0.8) / 1e6
 	}
 	n, _ := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
-	return n / 1e9
+	return n / 1e9 * 0.6
+}
+
+// diskFreeGB returns free space on the filesystem holding dir; +Inf if unknown (Windows), so it never blocks.
+func diskFreeGB(dir string) float64 {
+	out, err := exec.Command("df", "-Pk", dir).Output()
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if f := strings.Fields(lines[len(lines)-1]); err == nil && len(lines) > 1 && len(f) >= 4 { // fs blocks used avail ...
+		if kb, err := strconv.ParseFloat(f[3], 64); err == nil {
+			return kb / 1e6
+		}
+	}
+	return math.Inf(1)
 }
 
 func configPath() (string, error) {
