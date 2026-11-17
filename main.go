@@ -35,8 +35,22 @@ var safePermissions = []map[string]string{
 
 var in = bufio.NewReader(os.Stdin)
 
+const banner = `
+  ____  _      _____  ___  ____   _   _  ___  ____
+ / ___|| |    | ____||_ _||  _ \ | \ | ||_ _||  _ \
+| |  _ | |    |  _|   | | | |_) ||  \| | | | | |_) |
+| |_| || |___ | |___  | | |  __/ | |\  | | | |  _ <
+ \____||_____||_____||___||_|    |_| \_||___||_| \_\
+  o-O-o-O-o-O-o-O-o-O-o-O-o-O-o-O-o-O-o-O-o-O-o-O-o
+   forged from a cat's footfall and a mountain's roots
+`
+
 func main() {
+	if fi, _ := os.Stdout.Stat(); len(os.Args) == 1 && fi.Mode()&os.ModeCharDevice != 0 {
+		fmt.Print(banner) // only bare `gleip` in a terminal; stays in scrollback behind the TUI
+	}
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
+		fmt.Print(banner)
 		if err := setup(); err != nil {
 			fmt.Fprintln(os.Stderr, "gleip:", err)
 			os.Exit(1)
@@ -47,7 +61,7 @@ func main() {
 }
 
 func setup() error {
-	fmt.Print("Point gleipnir at:\n  1) your subscription / API key (ChatGPT, Anthropic, OpenAI, OpenRouter, ...)\n  2) a local model (Ollama)\n  3) a gleipnir endpoint\n> ")
+	fmt.Print("\nPoint gleipnir at:\n  1) your subscription / API key (ChatGPT, Anthropic, OpenAI, OpenRouter, ...)\n  2) a local model (Ollama)\n  3) a gleipnir endpoint\n> ")
 	var model string
 	var provider map[string]any
 	switch ask("") {
