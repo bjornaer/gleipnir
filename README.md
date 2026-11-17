@@ -10,6 +10,7 @@ irm https://github.com/bjornaer/gleipnir/releases/latest/download/install.ps1 | 
 ```sh
 gleip setup   # choose: subscription/API key, local model (Ollama), or gleipnir endpoint
 gleip         # start coding
+gleip --update
 ```
 
 - **Subscriptions:** ChatGPT Plus/Pro works through Sign in with ChatGPT. Claude Pro/Max can't: Anthropic's terms don't allow subscriptions in third-party tools, so use an Anthropic API key.

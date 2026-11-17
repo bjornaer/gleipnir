@@ -16,6 +16,9 @@ try {
     $sums = (Invoke-WebRequest "$Repo/checksums.txt" -UseBasicParsing).Content
     $want = ($sums -split "`n" | Where-Object { $_ -match " $([regex]::Escape($asset))$" }) -replace ' .*', ''
     if ((Get-FileHash "$tmp\$asset" -Algorithm SHA256).Hash -ne $want.Trim()) { throw "checksum mismatch for $asset" }
+    # A running exe can't be overwritten on Windows but can be renamed (gleip --update runs from it)
+    Remove-Item "$Bin\gleip.exe.old" -Force -ErrorAction SilentlyContinue
+    if (Test-Path "$Bin\gleip.exe") { Move-Item "$Bin\gleip.exe" "$Bin\gleip.exe.old" -Force }
     Copy-Item "$tmp\$asset" "$Bin\gleip.exe" -Force
 
     # OpenCode has no PowerShell installer: fetch its npm package, verified against npm's sha512

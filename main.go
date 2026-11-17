@@ -57,6 +57,14 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "--update" {
+		// Re-run the installer: same checksum checks, and it bumps the pinned OpenCode too.
+		const rel = "https://github.com/bjornaer/gleipnir/releases/latest/download/"
+		if runtime.GOOS == "windows" {
+			os.Exit(run("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm "+rel+"install.ps1 | iex"))
+		}
+		os.Exit(run("sh", "-c", "curl -fsSL "+rel+"install.sh | sh"))
+	}
 	os.Exit(run(opencode(), os.Args[1:]...))
 }
 
